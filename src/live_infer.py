@@ -17,8 +17,11 @@ audio_q = queue.Queue()
 
 def callback(indata, frames, time_info, status):
     if status:
-        pass
+        print(status)
+
     audio_q.put(indata[:, 0].copy())  # mono
+    # TEMP DEBUG: print loudness
+    print("level", float((indata[:, 0] ** 2).mean()) ** 0.5)
 
 def main():
     # clf = load("models/cough_clf.joblib")
@@ -57,7 +60,7 @@ def main():
                     rms = float(x[0])
                     p = min(1.0, rms * 30.0)
                 ## Gives working event pipeline without necessarily a trained model
-                
+
                 fired = post.update(p, t=now)
                 if fired:
                     print(datetime.now().isoformat(timespec="seconds"))
