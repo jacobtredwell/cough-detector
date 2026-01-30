@@ -1,0 +1,4 @@
+~/venv
+~/"Audio processing for cough detection.pdf"
+*.pyc
+__pycache__/
