@@ -1,0 +1,7 @@
+numpy
+sounddevice
+scipy
+matplotlib
+pandas
+joblib
+datetime
