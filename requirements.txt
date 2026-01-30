@@ -1,7 +1,5 @@
 numpy
-sounddevice
 scipy
-matplotlib
-pandas
-joblib
-datetime
+librosa
+torch
+torchaudio

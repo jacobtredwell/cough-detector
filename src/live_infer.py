@@ -2,160 +2,98 @@
 import os
 import queue
 import time
-from datetime import datetime
-
 import numpy as np
 import sounddevice as sd
-from joblib import load
+import torch
 
-from src.features import featurize_last_window
+from datetime import datetime
+from src.preprocessing import AudioPreprocessor
+from src.features import LogMelFeatureExtractor
 from src.postprocess import EventPostProcessor
+from src.model import CoughDetectorCNN
 
-SR = int(os.getenv("COUGH_SR", "16000"))
-WINDOW_SEC = float(os.getenv("COUGH_WINDOW_SEC", "1.0"))
-HOP_SEC = float(os.getenv("COUGH_HOP_SEC", "0.01"))
+# Constants from "Recommended Baseline Pipeline" [cite: 125]
+SR = 16000
+WINDOW_SEC = 1.0  # CNN usually trained on ~1 sec chunks
+HOP_SEC = 0.1     # Classification interval
 
-# Baseline scoring options when no model is available.
-# If COUGH_SCORE_MODE="fixed": p = min(1, rms * SCALE)
-# If COUGH_SCORE_MODE="adaptive": p = clip((rms / noise_floor - 1) / K, 0, 1)
-SCORE_MODE = os.getenv("COUGH_SCORE_MODE", "adaptive").strip().lower()
-SCALE = float(os.getenv("COUGH_SCALE", "30.0"))  # used only in fixed mode
-ADAPT_K = float(os.getenv("COUGH_ADAPT_K", "6.0"))  # larger = less sensitive
-NOISE_ALPHA = float(os.getenv("COUGH_NOISE_ALPHA", "0.995"))  # closer to 1 = slower updates
-
+# Load settings
 DEBUG = os.getenv("COUGH_DEBUG", "0") == "1"
+MODEL_PATH = os.getenv("COUGH_MODEL_PATH", "models/cough_cnn.pth")
 
-audio_q: queue.Queue[np.ndarray] = queue.Queue()
-
+audio_q = queue.Queue()
 
 def callback(indata, frames, time_info, status):
     if status:
         print(status)
-    audio_q.put(indata[:, 0].copy())  # mono
-
-
-def _pick_input_device():
-    # Optional: force a specific input device by index.
-    # Example: COUGH_INPUT_DEVICE=1 python -m src.live_infer
-    dev = os.getenv("COUGH_INPUT_DEVICE")
-    if dev is None or dev.strip() == "":
-        return
-    try:
-        idx = int(dev)
-    except ValueError:
-        return
-    sd.default.device = (idx, None)
-
+    audio_q.put(indata[:, 0].copy())
 
 def main():
-    _pick_input_device()
+    # 1. Initialize Pipeline Components [cite: 7]
+    preprocessor = AudioPreprocessor(sr=SR)     # Bandpass + Norm [cite: 19, 26]
+    featurizer = LogMelFeatureExtractor(sr=SR)  # Log-Mel [cite: 38]
+    post = EventPostProcessor()                 # Event Logic [cite: 118]
 
-    # Optional trained classifier
-    clf = None
-    model_path = os.getenv("COUGH_MODEL_PATH", "models/cough_clf.joblib")
-    if os.path.exists(model_path):
-        clf = load(model_path)
-        print("Loaded model from", model_path)
+    # 2. Load Model (CNN) 
+    model = CoughDetectorCNN()
+    if os.path.exists(MODEL_PATH):
+        model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
+        model.eval()
+        print(f"Loaded CNN from {MODEL_PATH}")
     else:
-        print("No trained model found. Using baseline scores (mode =", SCORE_MODE + ")")
+        print(f"No model found at {MODEL_PATH}. Running in signal-only mode.")
+        model = None
 
-    post = EventPostProcessor(
-        start_thresh=float(os.getenv("COUGH_START_THRESH", "0.7")),
-        end_thresh=float(os.getenv("COUGH_END_THRESH", "0.4")),
-        min_event_sec=float(os.getenv("COUGH_MIN_EVENT_SEC", "0.10")),
-        merge_gap_sec=float(os.getenv("COUGH_MERGE_GAP_SEC", "0.30")),
-        refractory_sec=float(os.getenv("COUGH_REFRACTORY_SEC", "0.75")),
-        smooth_len=int(os.getenv("COUGH_SMOOTH_LEN", "5")),
-        fire_on=os.getenv("COUGH_FIRE_ON", "start"),
-    )
-
-    ring = np.zeros(int(SR * WINDOW_SEC), dtype=np.float32)
+    # Ring buffer for audio
+    ring_len = int(SR * WINDOW_SEC)
+    ring = np.zeros(ring_len, dtype=np.float32)
     last_tick = time.time()
 
-    # Adaptive noise floor for baseline scoring
-    noise_floor = 1e-4
+    print("Listening...")
+    with sd.InputStream(samplerate=SR, channels=1, callback=callback):
+        while True:
+            chunk = audio_q.get()
+            n = len(chunk)
 
-    try:
-        with sd.InputStream(samplerate=SR, channels=1, dtype="float32", callback=callback):
+            # Update ring buffer
+            ring = np.roll(ring, -n)
+            ring[-n:] = chunk
+
+            now = time.time()
+            if now - last_tick < HOP_SEC:
+                continue
+
+            # --- PIPELINE EXECUTION ---
+            
+            # Step A: Preprocessing (Bandpass 100-6k Hz) [cite: 128]
+            clean_audio = preprocessor.process(ring)
+
+            # Step B: Feature Extraction (Log-Mel) 
+            # Shape: (1, 128, T)
+            features = featurizer.compute(clean_audio) 
+
+            # Step C: Inference
+            p = 0.0
+            if model:
+                with torch.no_grad():
+                    input_tensor = torch.from_numpy(features).float().unsqueeze(0) # Batch dim
+                    p = float(model(input_tensor).item())
+            else:
+                # Fallback: Simple energy heuristic if no model trained yet
+                p = float(np.mean(features) + 80) / 40.0 # Crude mapping from dB to prob
+                p = np.clip(p, 0, 1)
+
+            # Step D: Event Post-Processing [cite: 132]
+            fired = post.update(p, t=now)
+            
             if DEBUG:
-                try:
-                    print("Input device:", sd.query_devices(sd.default.device[0]))
-                except Exception:
-                    pass
+                print(f"Score: {p:.3f}")
 
-            while True:
-                chunk = audio_q.get()
-                n = len(chunk)
+            if fired:
+                print(f"{datetime.now().isoformat()} - COUGH DETECTED")
 
-                if n >= len(ring):
-                    ring[:] = chunk[-len(ring):]
-                else:
-                    ring = np.roll(ring, -n)
-                    ring[-n:] = chunk
-
-                now = time.time()
-                if now - last_tick < HOP_SEC:
-                    continue
-
-                x = featurize_last_window(ring, sr=SR)  # [rms, peak, peak_to_rms]
-                rms = float(x[0])
-
-                if clf is not None:
-                    p = float(clf.predict_proba([x])[0, 1])
-                else:
-                    if SCORE_MODE == "fixed":
-                        p = min(1.0, rms * SCALE)
-                    else:
-                       # --- adaptive baseline scoring (fixed) ---
-                        peak = float(x[1])
-                        p2r = float(x[2])
-
-                        # 1) compute ratio using current noise_floor
-                        ratio = rms / max(noise_floor, 1e-6)
-
-                        # 2) update noise_floor only when it looks like background
-                        quiet_enough = ratio < float(os.getenv("COUGH_NOISE_RATIO_MAX", "2.0"))
-                        not_impulsive = p2r < float(os.getenv("COUGH_NOISE_P2R_MAX", "6.0"))
-
-                        if quiet_enough and not_impulsive:
-                            noise_floor = NOISE_ALPHA * noise_floor + (1.0 - NOISE_ALPHA) * rms
-
-                        # 3) recompute ratio after possible update
-                        ratio = rms / max(noise_floor, 1e-6)
-
-                        # 4) combine ratio + spike terms
-                        ratio_term = (ratio - 1.0) / ADAPT_K
-                        spike_term = (p2r - 3.0) / 6.0
-                        raw = 0.7 * ratio_term + 0.3 * spike_term
-                        p = float(np.clip(raw, 0.0, 1.0))
-
-                        print(
-                            f"rms={rms:.6f} noise={noise_floor:.6f} ratio={ratio:.2f} "
-                            f"p2r={p2r:.2f} rt={ratio_term:.2f} st={spike_term:.2f} raw={raw:.2f} p={p:.3f}"
-                        )
-                        # --- end ---
-
-                    
-
-
-
-
-                fired = post.update(p, t=now)
-                if DEBUG:
-                    print(f"rms={rms:.6f} p={p:.3f} noise={noise_floor:.6f}")
-
-                if fired:
-                    ts = datetime.now().isoformat()
-                    print(ts)
-
-                last_tick = now
-
-    except KeyboardInterrupt:
-        print("\nStopped.")
-    except Exception as e:
-        print("Error:", repr(e))
-        raise
-
+            last_tick = now
 
 if __name__ == "__main__":
     main()
+    

@@ -1,22 +1,15 @@
 # src/postprocess.py
 from __future__ import annotations
-
 from collections import deque
-
 
 class EventPostProcessor:
     """
-    Converts frame-level scores into cough events.
-
-    The live loop produces a score p in [0, 1] per hop (10 ms by default).
-    This class turns those frame scores into discrete events using:
-      - smoothing (moving average)
-      - hysteresis (start_thresh, end_thresh)
-      - minimum event duration
-      - merge gap (treat very-close bursts as one event)
-      - refractory period (suppress repeated triggers)
-
-    By default, `update(...)` returns True on EVENT START.
+    Converts frame-level scores into cough events using hysteresis and smoothing.
+    Implements rules from Section 6:
+      - Smoothing (Median filtering/Moving Average) [cite: 115]
+      - Hysteresis thresholds [cite: 116]
+      - Minimum duration constraints [cite: 117]
+      - Refractory period [cite: 123]
     """
 
     def __init__(
@@ -57,8 +50,7 @@ class EventPostProcessor:
     def update(self, p: float, t: float) -> bool:
         """
         Update with current frame score p at time t (seconds, monotonic).
-
-        Returns True when an event is detected (start or end depending on fire_on).
+        Returns True when an event is detected.
         """
         p_s = self._smooth_p(p)
 
@@ -82,7 +74,7 @@ class EventPostProcessor:
                     fired = True
                     self.last_fire_t = t
         else:
-            # End condition
+            # End condition (Hysteresis)
             if p_s < self.end_thresh:
                 start_t = self.event_start_t if self.event_start_t is not None else t
                 dur = t - start_t
@@ -91,8 +83,10 @@ class EventPostProcessor:
                 self.last_end_t = t
                 self.event_start_t = None
 
+                # Minimum duration check [cite: 122]
                 if self.fire_on == "end" and dur >= self.min_event_sec:
                     fired = True
                     self.last_fire_t = t
 
         return fired
+    
