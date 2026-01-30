@@ -1,7 +1,7 @@
 # src/features.py
 import numpy as np
 
-def featurize_last_window(audio_window, sr=16000):
+def featurize_last_window(x: np.ndarray, sr: int =16000) -> np.ndarray:
     """
     Baseline feature extractor for a 1-second audio window.
     Returns a small, stable feature vector so the live loop works immediately.
@@ -22,4 +22,3 @@ def featurize_last_window(audio_window, sr=16000):
 
     # Return as a 1D feature vector
     return np.array([rms, peak, peak_to_rms], dtype=np.float32)
-    
