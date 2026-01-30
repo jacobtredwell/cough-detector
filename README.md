@@ -5,7 +5,7 @@ Real-time cough event detector for macOS. Streams live microphone audio, runs an
 
 This repo implements a real-time cough detector that listens to your microphone and prints the current timestamp whenever a cough is detected.
 
-It follows a standard cough detection recipe used in speech and bioacoustics style pipelines: preprocessing (bandpass + normalization + activity gating), time-frequency features (log-mel or MFCC), a lightweight classifier, then event-level post-processing (hysteresis, min duration, refractory period). :contentReference[oaicite:0]{index=0}
+It follows a standard cough detection recipe used in speech and bioacoustics style pipelines: preprocessing (bandpass + normalization + activity gating), time-frequency features (log-mel or MFCC), a lightweight classifier, then event-level post-processing (hysteresis, min duration, refractory period). 
 
 ## What it does
 
@@ -18,25 +18,25 @@ It follows a standard cough detection recipe used in speech and bioacoustics sty
 ## Architecture
 
 **Audio stream**  
-Mic (16 kHz mono) :contentReference[oaicite:1]{index=1}
+Mic (16 kHz mono) 
 
 **Preprocessing**  
-- Bandpass filtering around 100 Hz to 6 kHz :contentReference[oaicite:2]{index=2}  
-- RMS or peak normalization (avoid aggressive AGC) :contentReference[oaicite:3]{index=3}  
-- Activity detection / VAD to skip silence :contentReference[oaicite:4]{index=4}  
+- Bandpass filtering around 100 Hz to 6 kHz 
+- RMS or peak normalization (avoid aggressive AGC) 
+- Activity detection / VAD to skip silence 
 
 **Features and model**
 Two supported feature paths:
 
-1) Log-mel spectrogram (recommended when using CNNs) :contentReference[oaicite:5]{index=5}  
-2) MFCCs (compact, classical ML friendly; optionally add delta and delta-delta) :contentReference[oaicite:6]{index=6}  
+1) Log-mel spectrogram (recommended when using CNNs) 
+2) MFCCs (compact, classical ML friendly; optionally add delta and delta-delta) 
 
 Typical log-mel parameters:
 - window 20 to 40 ms
 - hop 10 ms
 - FFT size 512 or 1024
 - mel bins 40 to 128
-- log scaling :contentReference[oaicite:7]{index=7}  
+- log scaling 
 
 **Event post-processing**
 Coughs are events, not frames. We apply:
@@ -45,14 +45,14 @@ Coughs are events, not frames. We apply:
 - minimum duration constraint
 - merge detections within 200 to 500 ms
 - reject events shorter than ~100 ms
-- refractory period between coughs :contentReference[oaicite:8]{index=8}  
+- refractory period between coughs 
 
 ## Why these choices
 
-- Coughs are short, impulsive events, so activity detection helps a lot. :contentReference[oaicite:9]{index=9}  
-- Log-mel is the most common time-frequency representation for cough detection and pairs well with CNNs. :contentReference[oaicite:10]{index=10}  
-- Event-level post-processing dramatically reduces false positives. :contentReference[oaicite:11]{index=11}  
-- Dataset quality often matters more than model complexity (mic variability, background speech, label noise, class imbalance). :contentReference[oaicite:12]{index=12}  
+- Coughs are short, impulsive events, so activity detection helps a lot. 
+- Log-mel is the most common time-frequency representation for cough detection and pairs well with CNNs. 
+- Event-level post-processing dramatically reduces false positives. 
+- Dataset quality often matters more than model complexity (mic variability, background speech, label noise, class imbalance). 
 
 ## Project structure
 
