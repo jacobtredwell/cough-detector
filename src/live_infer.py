@@ -106,36 +106,37 @@ def main():
                     if SCORE_MODE == "fixed":
                         p = min(1.0, rms * SCALE)
                     else:
-                        # ratio = rms / (noise_floor + 1e-12)
-                        # # adaptive: compare to running noise floor
-                        # noise_floor = NOISE_ALPHA * noise_floor + (1.0 - NOISE_ALPHA) * rms
-                        # # map ratio to [0,1], ratio ~ 1 => 0, ratio ~ (1+K) => ~1
-                        # p = (ratio - 1.0) / ADAPT_K
-                        # p = float(np.clip(p, 0.0, 1.0))
-
-                        
-                        ratio = rms / (noise_floor + 1e-12)
-                        # Update noise floor only when we are likely in "background" audio.
-                        # Two gates:
-                        #  1) ratio not too high
-                        #  2) peak_to_rms not too "impulsive"
+                       # --- adaptive baseline scoring (fixed) ---
                         peak = float(x[1])
                         p2r = float(x[2])
+
+                        # 1) compute ratio using current noise_floor
+                        ratio = rms / max(noise_floor, 1e-6)
+
+                        # 2) update noise_floor only when it looks like background
                         quiet_enough = ratio < float(os.getenv("COUGH_NOISE_RATIO_MAX", "2.0"))
                         not_impulsive = p2r < float(os.getenv("COUGH_NOISE_P2R_MAX", "6.0"))
 
                         if quiet_enough and not_impulsive:
                             noise_floor = NOISE_ALPHA * noise_floor + (1.0 - NOISE_ALPHA) * rms
 
-                        # Recompute ratio after possible update
-                        ratio = rms / (noise_floor + 1e-12)
-                        # p = (ratio - 1.0) / ADAPT_K
-                        # p = float(np.clip(p, 0.0, 1.0))
+                        # 3) recompute ratio after possible update
+                        ratio = rms / max(noise_floor, 1e-6)
 
-                        # Combine ratio and spike terms for better sensitivity
+                        # 4) combine ratio + spike terms
                         ratio_term = (ratio - 1.0) / ADAPT_K
-                        spike_term = (p2r - 3.0) / 6.0   # rough scale
-                        p = float(np.clip(0.7 * ratio_term + 0.3 * spike_term, 0.0, 1.0))
+                        spike_term = (p2r - 3.0) / 6.0
+                        raw = 0.7 * ratio_term + 0.3 * spike_term
+                        p = float(np.clip(raw, 0.0, 1.0))
+
+                        print(
+                            f"rms={rms:.6f} noise={noise_floor:.6f} ratio={ratio:.2f} "
+                            f"p2r={p2r:.2f} rt={ratio_term:.2f} st={spike_term:.2f} raw={raw:.2f} p={p:.3f}"
+                        )
+                        # --- end ---
+
+                    
+
 
 
 
