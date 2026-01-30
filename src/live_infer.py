@@ -58,7 +58,8 @@ def main():
                     # baseline: map RMS energy to pseduo-probability
                     # Tune the scale base on your mic environment
                     rms = float(x[0])
-                    p = min(1.0, rms * 30.0)
+                    # p = min(1.0, rms * 30.0) # 30.0 SCALE FOR LAPTOP MIC
+                    p = min(1.0, rms * 500.0)  # 500.0 SCALE FOR SENSITIVE MIC
                 ## Gives working event pipeline without necessarily a trained model
 
                 fired = post.update(p, t=now)
