@@ -3,3 +3,4 @@ scipy
 librosa
 torch
 torchaudio
+scikit-learn
