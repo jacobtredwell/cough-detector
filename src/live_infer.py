@@ -20,6 +20,7 @@ HOP_SEC = 0.1     # Classification interval
 # Load settings
 DEBUG = os.getenv("COUGH_DEBUG", "0") == "1"
 MODEL_PATH = os.getenv("COUGH_MODEL_PATH", "models/cough_cnn.pth")
+# MODEL_PATH = os.getenv("COUGH_MODEL_PATH", "models/multiclass_cnn.pth")
 
 audio_q = queue.Queue()
 
