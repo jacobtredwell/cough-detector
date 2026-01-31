@@ -1,6 +1,9 @@
 numpy
+pandas
+torch
 scipy
 librosa
-torch
 torchaudio
 scikit-learn
+seaborn
+matpotliblib

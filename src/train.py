@@ -1,6 +1,7 @@
 # src/train.py
 import os
 import glob
+import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,10 +10,13 @@ from sklearn.model_selection import train_test_split
 import librosa
 import numpy as np
 
+# Add src to path
+sys.path.append(os.path.dirname(__file__))
+
 # Import our modular components
-from src.preprocessing import AudioPreprocessor
-from src.features import LogMelFeatureExtractor
-from src.model import CoughDetectorCNN
+from preprocessing import AudioPreprocessor
+from features import LogMelFeatureExtractor
+from model import AudioClassifierCNN
 
 # Configuration based on PDF Section 2 & 3
 SR = 16000
@@ -20,7 +24,7 @@ BATCH_SIZE = 32
 EPOCHS = 20
 LEARNING_RATE = 1e-3
 
-class CoughDataset(Dataset):
+class AudioDataset(Dataset):
     def __init__(self, file_paths, labels):
         self.file_paths = file_paths
         self.labels = labels
@@ -51,28 +55,45 @@ class CoughDataset(Dataset):
         # Returns shape (1, 128, 101)
         features = self.featurizer.compute(y_clean)
         
-        return torch.tensor(features, dtype=torch.float32), torch.tensor(label, dtype=torch.float32)
+        return torch.tensor(features, dtype=torch.float32), torch.tensor(label, dtype=torch.long)
 
 def train():
-    # 1. Prepare Data
-    # Assumes data/coughs and data/non_coughs exist in the root
-    cough_files = glob.glob("data/coughs/*.wav")
-    non_cough_files = glob.glob("data/non_coughs/*.wav")
+    # 1. Prepare Data - Scan all subfolders in data/ as classes
+    data_dir = 'data'
     
-    files = cough_files + non_cough_files
-    # Label 1 for Cough, 0 for Non-Cough
-    labels = [1]*len(cough_files) + [0]*len(non_cough_files)
+    # Get all subfolders (classes) avoiding hidden files
+    classes = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d)) and not d.startswith('.')]
+    classes.sort()  # Ensure consistent order
     
-    if not files:
-        print("ERROR: No data found in data/coughs/*.wav or data/non_coughs/*.wav")
+    if not classes:
+        print("ERROR: No class folders found in data/")
         return
+    
+    class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
+    idx_to_class = {i: cls_name for cls_name, i in class_to_idx.items()}
+    
+    print(f"Found {len(classes)} classes: {classes}")
+    
+    # Collect all files and labels
+    all_files = []
+    all_labels = []
+    
+    for cls_name in classes:
+        cls_folder = os.path.join(data_dir, cls_name)
+        files = glob.glob(os.path.join(cls_folder, "*.wav"))
+        all_files.extend(files)
+        all_labels.extend([class_to_idx[cls_name]] * len(files))
+    
+    if not all_files:
+        print("ERROR: No .wav files found in data/ subfolders")
+        return
+    
+    print(f"Total audio files: {len(all_files)}")
+    
+    X_train, X_val, y_train, y_val = train_test_split(all_files, all_labels, test_size=0.2, random_state=42, stratify=all_labels)
 
-    print(f"Found {len(cough_files)} coughs and {len(non_cough_files)} non-coughs.")
-
-    X_train, X_val, y_train, y_val = train_test_split(files, labels, test_size=0.2, random_state=42)
-
-    train_ds = CoughDataset(X_train, y_train)
-    val_ds = CoughDataset(X_val, y_val)
+    train_ds = AudioDataset(X_train, y_train)
+    val_ds = AudioDataset(X_val, y_val)
     
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
@@ -81,8 +102,9 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on {device}...")
     
-    model = CoughDetectorCNN().to(device)
-    criterion = nn.BCELoss() # Binary Cross Entropy
+    num_classes = len(classes)
+    model = AudioClassifierCNN(num_classes=num_classes).to(device)
+    criterion = nn.CrossEntropyLoss()  # Multi-class loss
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     # 3. Training Loop
@@ -90,7 +112,7 @@ def train():
         model.train()
         train_loss = 0
         for X, y in train_loader:
-            X, y = X.to(device), y.to(device).unsqueeze(1)
+            X, y = X.to(device), y.to(device)
             
             optimizer.zero_grad()
             outputs = model(X)
@@ -106,10 +128,10 @@ def train():
         total = 0
         with torch.no_grad():
             for X, y in val_loader:
-                X, y = X.to(device), y.to(device).unsqueeze(1)
+                X, y = X.to(device), y.to(device)
                 outputs = model(X)
                 val_loss += criterion(outputs, y).item()
-                predicted = (outputs > 0.5).float()
+                _, predicted = torch.max(outputs.data, 1)
                 total += y.size(0)
                 correct += (predicted == y).sum().item()
         
@@ -118,9 +140,15 @@ def train():
 
     # 4. Save Artifacts
     os.makedirs("models", exist_ok=True)
-    save_path = "models/cough_cnn.pth"
+    save_path = "models/audio_classifier_cnn.pth"
     torch.save(model.state_dict(), save_path)
     print(f"Model saved to {save_path}")
+    
+    # Save class mappings for inference
+    import json
+    with open("models/class_mappings.json", "w") as f:
+        json.dump({"classes": classes, "class_to_idx": class_to_idx, "idx_to_class": idx_to_class}, f)
+    print("Class mappings saved to models/class_mappings.json")
 
 if __name__ == "__main__":
     train()

@@ -2,6 +2,7 @@
 import os
 import queue
 import time
+import json
 import numpy as np
 import sounddevice as sd
 import torch
@@ -10,7 +11,7 @@ from datetime import datetime
 from src.preprocessing import AudioPreprocessor
 from src.features import LogMelFeatureExtractor
 from src.postprocess import EventPostProcessor
-from src.model import CoughDetectorCNN
+from src.model import AudioClassifierCNN
 
 # Constants from "Recommended Baseline Pipeline" [cite: 125]
 SR = 16000
@@ -18,9 +19,9 @@ WINDOW_SEC = 1.0  # CNN usually trained on ~1 sec chunks
 HOP_SEC = 0.1     # Classification interval
 
 # Load settings
-DEBUG = os.getenv("COUGH_DEBUG", "0") == "1"
-MODEL_PATH = os.getenv("COUGH_MODEL_PATH", "models/cough_cnn.pth")
-# MODEL_PATH = os.getenv("COUGH_MODEL_PATH", "models/multiclass_cnn.pth")
+DEBUG = os.getenv("AUDIO_DEBUG", "0") == "1"
+MODEL_PATH = os.getenv("AUDIO_MODEL_PATH", "models/audio_classifier_cnn.pth")
+MAPPINGS_PATH = os.getenv("AUDIO_MAPPINGS_PATH", "models/class_mappings.json")
 
 audio_q = queue.Queue()
 
@@ -35,14 +36,26 @@ def main():
     featurizer = LogMelFeatureExtractor(sr=SR)  # Log-Mel [cite: 38]
     post = EventPostProcessor()                 # Event Logic [cite: 118]
 
-    # 2. Load Model (CNN) 
-    model = CoughDetectorCNN()
-    if os.path.exists(MODEL_PATH):
-        model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
-        model.eval()
-        print(f"Loaded CNN from {MODEL_PATH}")
+    # 2. Load Model and Class Mappings
+    classes = []
+    idx_to_class = {}
+    if os.path.exists(MAPPINGS_PATH):
+        with open(MAPPINGS_PATH, "r") as f:
+            mappings = json.load(f)
+            classes = mappings["classes"]
+            idx_to_class = {int(k): v for k, v in mappings["idx_to_class"].items()}
+        num_classes = len(classes)
+        model = AudioClassifierCNN(num_classes=num_classes)
+        if os.path.exists(MODEL_PATH):
+            model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
+            model.eval()
+            print(f"Loaded multi-class CNN from {MODEL_PATH}")
+            print(f"Classes: {classes}")
+        else:
+            print(f"No model found at {MODEL_PATH}. Running in signal-only mode.")
+            model = None
     else:
-        print(f"No model found at {MODEL_PATH}. Running in signal-only mode.")
+        print(f"No class mappings found at {MAPPINGS_PATH}. Running in signal-only mode.")
         model = None
 
     # Ring buffer for audio
@@ -74,24 +87,30 @@ def main():
             features = featurizer.compute(clean_audio) 
 
             # Step C: Inference
-            p = 0.0
+            prediction = "unknown"
+            confidence = 0.0
             if model:
                 with torch.no_grad():
                     input_tensor = torch.from_numpy(features).float().unsqueeze(0) # Batch dim
-                    p = float(model(input_tensor).item())
+                    logits = model(input_tensor)
+                    probs = torch.softmax(logits, dim=1)
+                    score, idx = torch.max(probs, 1)
+                    prediction = idx_to_class.get(idx.item(), "unknown")
+                    confidence = score.item()
             else:
                 # Fallback: Simple energy heuristic if no model trained yet
-                p = float(np.mean(features) + 80) / 40.0 # Crude mapping from dB to prob
-                p = np.clip(p, 0, 1)
+                energy = float(np.mean(features) + 80) / 40.0 # Crude mapping from dB to prob
+                confidence = np.clip(energy, 0, 1)
+                prediction = "high_energy" if confidence > 0.5 else "low_energy"
 
             # Step D: Event Post-Processing [cite: 132]
-            fired = post.update(p, t=now)
+            fired = post.update(confidence, t=now)
             
             if DEBUG:
-                print(f"Score: {p:.3f}")
+                print(f"Prediction: {prediction} ({confidence:.3f})")
 
             if fired:
-                print(f"{datetime.now().isoformat()} - COUGH DETECTED")
+                print(f"{datetime.now().isoformat()} - {prediction.upper()} DETECTED (conf: {confidence:.2f})")
 
             last_tick = now
 

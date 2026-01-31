@@ -2,11 +2,12 @@
 import torch
 import torch.nn as nn
 
-class CoughDetectorCNN(nn.Module):
+class AudioClassifierCNN(nn.Module):
     """
-    Standard 2D CNN for Log-Mel Spectrograms[cite: 103, 131].
+    Multi-class 2D CNN for Log-Mel Spectrograms.
+    Can classify any number of audio classes (e.g., cough, dog, sneezing, etc.).
     """
-    def __init__(self):
+    def __init__(self, num_classes):
         super().__init__()
         self.features = nn.Sequential(
             # Conv Layer 1
@@ -29,12 +30,12 @@ class CoughDetectorCNN(nn.Module):
         )
         
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Linear(128, 1)
+        self.classifier = nn.Linear(128, num_classes)
 
     def forward(self, x):
         x = self.features(x)
         x = self.global_pool(x)
         x = torch.flatten(x, 1)
         logits = self.classifier(x)
-        return torch.sigmoid(logits)
+        return logits  # Return raw logits for multi-class (use softmax/cross-entropy)
     
