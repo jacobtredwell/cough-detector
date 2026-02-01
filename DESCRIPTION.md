@@ -1,0 +1,1 @@
+An advanced audio detection tool that takes audio input, uses a trained classifier to determine the most probable classification for the audio source, and provides timestamped outputs for precise analysis.
