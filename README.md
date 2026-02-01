@@ -1,23 +1,24 @@
-# Real-Time Cough Detector
+# Audio Detector
 
-A modular, ML-based audio event detector that streams live microphone audio, processes it via a bioacoustics-grade pipeline, and detects cough events in real-time.
+## Setup
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/jacobtredwell/audio-detector.git
+   cd audio-detector
+   ```
 
-## Project Structure
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-```text
-cough-detector/
-├── data/                   # (User provided) Place training .wav files here
-│   ├── coughs/
-│   └── non_coughs/
-├── models/                 # Stores trained 'cough_cnn.pth'
-├── src/                    # Source code
-│   ├── preprocessing.py    # Bandpass (100-6k Hz) & Normalization
-│   ├── features.py         # Log-Mel Spectrogram extraction
-│   ├── model.py            # CNN architecture
-│   ├── postprocess.py      # Event hysteresis & smoothing
-│   ├── train.py            # Training script
-│   └── live_infer.py       # Main real-time application
-├── notebooks/              # Analysis & Visualization
-├── requirements.txt
-└── run.sh
+## Dependencies
+- Python 3.x
+- Required libraries specified in `requirements.txt`
 
+## Usage
+To use the audio detector, run:
+```bash
+python detector.py --input <input_file> --output <output_file>
+```
+Replace `<input_file>` with the path to the audio file and `<output_file>` with the desired output path.
